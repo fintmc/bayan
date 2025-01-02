@@ -1,32 +1,42 @@
 # Bayan: play like on a bayan with your keyboard!
 
+## Basic usage
+
+Keybindings:
+* A-Z: play a note
+* Ctrl+Q: quit the application
+* Up/Down arrow: Increase/decreas volume by 10%
+* Ctrl+Up/Down arrow: Increase/decreas volume by 1%
+* Backslash: toggle mute
+
 ## Building
 
 First, clone this repo recursively:
-```sh
+```
 $ git clone --recursive https://github.com/fintmc/bayan
 ```
 
 ### Linux
 
 Install dependencies:
-```sh
+```
 # sudo apt install libasound-dev libglfw3-dev
 ```
 
 Build PortAudio:
-```sh
+```
 $ cd portaudio
 $ ./configure && make
 ```
 
 Build bayan executable:
-```sh
-$ cc -o bayan main.c glad/glad.c portaudio/lib/.libs/libportaudio.so -I./portaudio/include/ -lm -lrt -lasound -lGL -lglfw3
+```
+$ cc -o bayan main.c glad/glad.c portaudio/lib/.libs/libportaudio.so -I./portaudio/include/ -lm -lGL -lglfw3
 ```
 
-### Windows (or anything else)
-Go get a real OS.
+### Anything else non-posix
+
+Not written but there's probably a way to do this.
 
 ## TODOs
 - Add photo of keyboard layout

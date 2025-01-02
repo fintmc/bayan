@@ -58,7 +58,7 @@ typedef enum {
 } Note;
 
 typedef struct {
-  bool playing;               // are we currently allowed to play
+  bool mute;                  // are we muted
   float volume;               // global volume multiplier, [0.0, 1.0]
   float t;                    // time variable for wave calculation
   bool keys[__NOTES_NUM__];   // physical keyboard keys
@@ -100,7 +100,7 @@ Note keyToNote(int key) {
     keyToNote(L, NOTE_G4);
     case 46: return NOTE_G4s; // >
 
-    default: return -1;
+    default: return NOTE_BAD;
   }
 #undef keyToNote
 }
@@ -118,10 +118,11 @@ static int onAudioCallback(const void *inputBuffer, void *outputBuffer,
   Context* ctx = (Context*)data;
 
   for(unsigned int i = 0; i < framesPerBuffer; i++) {
-    if(ctx->playing) {
+    if(!ctx->mute) {
       float v = 0;
       float freqSum = 0;
       size_t freqN = 0;
+      //float highestFreq = 0;
       for(int i = 0; i < __NOTES_NUM__; i++) {
         if(ctx->keys[i]) {
           float frequency = ctx->notes[i];
@@ -132,13 +133,13 @@ static int onAudioCallback(const void *inputBuffer, void *outputBuffer,
       }
       if(freqN == 0) goto zero;
       //v *= 100; // TODO: what should we do here?
-      v *= 10;
-      //size_t freqN2 = freqN * freqN;
-      //v *= (freqSum / ((float)freqN));
-      
+      //v *= highestFreq;
+      size_t freqN2 = freqN * freqN;
+      v *= (freqSum / (float)freqN2);
+
       v *= ctx->volume;
-      *out++ = v;
-      *out++ = v;
+      *out++ = v; // left
+      *out++ = v; // right
 
       ctx->t += (1.f / (float)PA_SAMPLE_RATE);
       if(ctx->t >= (float)PA_SAMPLE_RATE) ctx->t = 0.f;
@@ -173,6 +174,11 @@ void onKey(GLFWwindow* w, int key, int _, int action, int mods_i) {
   if(down && mods.ctrl && key == GLFW_KEY_Q)
     glfwSetWindowShouldClose(window, GLFW_TRUE);
 
+  // toggle mute with backslash
+  if(down && key == GLFW_KEY_BACKSLASH)
+    g_ctx.mute ^= 1;
+
+  // adjusting volume with C-up/down
   if(!down && (key == GLFW_KEY_UP || key == GLFW_KEY_DOWN)) {
     float volMod = 0.1f;
     if(key == GLFW_KEY_DOWN) volMod *= -1;
@@ -180,17 +186,17 @@ void onKey(GLFWwindow* w, int key, int _, int action, int mods_i) {
     g_ctx.volume += volMod;
     if(g_ctx.volume > 1.f) {
       g_ctx.volume = 1.f;
-      printf("Changing volume to 100%%\n");
+      printf("Changed volume to 100%%\n");
     } else if (g_ctx.volume < 0.01f)
       g_ctx.volume = 0;
     else // everything OK, notify the user
-      printf("Changing volume to %d%%\n", (int)(100*g_ctx.volume));
+      printf("Changed volume to %d%%\n", (int)(100*g_ctx.volume));
   }
 
   // playing notes
   if(mods.none) {
     Note note = keyToNote(key);
-    if(note != -1)
+    if(note != NOTE_BAD)
       g_ctx.keys[note] = down;
   }
 
@@ -200,6 +206,9 @@ void onKey(GLFWwindow* w, int key, int _, int action, int mods_i) {
     printf("Released key %d\n", key);*/
 }
 
+#define paCheckError() \
+  if(pa_err != paNoError) goto pa_error;
+
 int main() {
   if(!glfwInit()) {
     printf("Failed to initiate GLFW\n");
@@ -207,9 +216,9 @@ int main() {
   }
   printf("Using GLFW %s\n", glfwGetVersionString());
 
-  double tuningValue = pow(2, 1. / 12.);
+  float tuningValue = powf(2.f, 1.f / 12.f); // 12th root of 2
   { // generate note->frequency table
-    double mult = 1; // start at G2 hence this is 1
+    float mult = 1;
     for(size_t i = 0; i < __NOTES_NUM__; i++) {
       g_ctx.notes[i] = G2_FREQ * mult;
       mult *= tuningValue;
@@ -219,7 +228,7 @@ int main() {
   PaStream* stream = NULL;
   { // initalize portaudio
     pa_err = Pa_Initialize();
-    if(pa_err != paNoError) goto pa_error;
+    paCheckError();
 
     PaStreamParameters pa_params = {0};
     pa_params.device = Pa_GetDefaultOutputDevice();
@@ -236,7 +245,7 @@ int main() {
 
     pa_err = Pa_OpenStream(&stream, NULL, &pa_params, PA_SAMPLE_RATE, PA_SAMPLES_PER_BUF,
                            paNoFlag, &onAudioCallback, &g_ctx);
-    if(pa_err != paNoError) goto pa_error;
+    paCheckError();
   }
 
   glfwSetErrorCallback(onGlfwError);
@@ -257,36 +266,37 @@ int main() {
 
   glfwSetKeyCallback(window, onKey);
 
-  g_ctx.volume = 0.8f;
-  g_ctx.playing = true;
+  g_ctx.volume = 0.95;
   printf("Starting Bayan with inital volume %d%%\n", (int)(g_ctx.volume*100));
   pa_err = Pa_StartStream(stream);
-  if(pa_err != paNoError) goto pa_error;
+  paCheckError();
 
   float c = 0;
   bool dec = false;
   while(!glfwWindowShouldClose(window)) {
-    glClearColor(c, 0.5, 1-c, 1);
+    glClearColor(c, 0.5, 1-c, 1); // basic screen color effects
+    glClear(GL_COLOR_BUFFER_BIT);
     if(c >= 1.0f) dec = true;
     if(c <= 0.0f) dec = false;
     if(!dec) c += 1.0f/255.0f;
     else c -= 1.0f/255.0f;
     //g_ctx.freq = 90 + c * 100;
     //g_ctx.volume = c;
-    glClear(GL_COLOR_BUFFER_BIT);
+
     glfwPollEvents();
     glfwSwapBuffers(window);
   }
+  // cleanup
   Pa_StopStream(stream);
   Pa_CloseStream(stream);
-  glfwTerminate();
   Pa_Terminate();
+  glfwTerminate();
   return 0;
 
  pa_error:
   Pa_Terminate();
+  glfwTerminate();
   printf("PortAudio error has occurred:\n"
          " %s (0x%x)\n", Pa_GetErrorText(pa_err), pa_err);
-  glfwTerminate();
-  return 69;
+  return 1;
 }
